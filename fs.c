@@ -7,12 +7,15 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <unistd.h>
+#include <stdbool.h>
 
 #define FS_MAGIC           0xf0f03410
 #define INODES_PER_BLOCK   128
 #define POINTERS_PER_INODE 5
 #define POINTERS_PER_BLOCK 1024
-#define MOUNTED 		   0
+bool MOUNTED = false;
+bool *bitmap;			//global array keeping track of the used data blocks
+bool *inodemap;			//global array keeping track of the used inodes
 
 struct fs_superblock {
 	int magic;			//magic number
@@ -25,7 +28,7 @@ struct fs_inode {
 	int isvalid;						//if the inode is valid
 	int size;							//size of entire file?
 	int direct[POINTERS_PER_INODE];		//array of direct pointers
-	int indirect;
+	int indirect;						//gives the location of the indirect block that will give the rest of the indirect blocks
 };
 
 union fs_block {
@@ -35,10 +38,25 @@ union fs_block {
 	char data[DISK_BLOCK_SIZE];					//contains all of the data for the block
 };
 
-int fs_format()
+
+
+int fs_format() //superblock write and inode write and you need the file bitmap stuff
 {
-	//calls superblock write and inode write and you need the file bitmap stuff
-	return 0;
+	if (MOUNTED)
+	{
+		printf("disk already mounted. failure\n");
+		return -1;
+	}
+
+	else{
+		union fs_block block;
+		block.super.nblocks=disk_size();
+		block.super.magic = FS_MAGIC;
+		block.super.ninodeblocks = block.super.nblocks * .1;
+		block.super.ninodes = block.super.ninodeblocks * INODES_PER_BLOCK; 
+		return 1;
+	}
+	return 0; //otherwise also if you get here, you've really screwed up
 }
 
 void fs_debug()
@@ -49,49 +67,72 @@ void fs_debug()
 	if (block.super.magic!=FS_MAGIC)
 	{
 		printf("Error magic isn't working (the magic number is not right) \n");
-	}else if (block.super.magic==FS_MAGIC)
+		
+	}
+	else if (block.super.magic==FS_MAGIC)
 	{
 		printf("Magic number is valid\n");
-	}
-
-	printf("superblock:\n");
-	printf("    %d blocks on disk\n",block.super.nblocks);
-	printf("    %d inode blocks\n",block.super.ninodeblocks);
-	printf("    %d inodes in total\n",block.super.ninodes);
-	union fs_block iNodeBlock;
-
-	disk_read(1,iNodeBlock.data);
-	for (int i = 0; i < POINTERS_PER_INODE; i++)
-	{
-		if (iNodeBlock.inode[i].isvalid)
+		printf("superblock:\n");
+		printf("    %d blocks on disk\n",block.super.nblocks);
+		printf("    %d inode blocks\n",block.super.ninodeblocks);
+		printf("    %d inodes in total\n\n",block.super.ninodes);
+		union fs_block inodeblock;// variable for inodeblock
+		union fs_block indirect;
+		disk_read(1,inodeblock.data);
+		for (int i = 0; i < POINTERS_PER_INODE; i++)
 		{
-			printf("inode: ");
-			printf("	Size of inode %d: %d\n",i,iNodeBlock.inode[i].size);
-			printf("	Direct blocks: ");
-			for (i = 0; i < POINTERS_PER_INODE; i++)
+			if (inodeblock.inode[i].isvalid)
 			{
-				if (iNodeBlock.inode->direct[i]!=0)
+				printf("Inode %d: %d\n",i,inodeblock.inode[i].size);
+				printf("Direct blocks: \n");
+				
+				for (int j = 0; j < POINTERS_PER_INODE; j++)//print out the direct blocks
 				{
-					printf(" %d", iNodeBlock.inode->direct[i]);
+					if (inodeblock.inode[i].direct[j]!=0)//if the direct block has stuff in it
+					{
+						printf("	direct[%d]: %d\n",j,inodeblock.inode[i].direct[j]);
+					}
 				}
+				printf("\n");
+				if (inodeblock.inode[i].indirect!=0)
+				{
+					printf("	indirect block: %d\n", inodeblock.inode[i].indirect);
+					// indirect pointers print out
+					disk_read(inodeblock.inode[i].indirect,indirect.data); // read in the indirect data block of pointers
+					for (int m = 0; m < POINTERS_PER_BLOCK; m++)
+					{
+						if (indirect.pointers[m]!=0)
+						{
+							printf("	indirect pointer[%d]: %d\n", m, indirect.pointers[m]);
+						}
+					}
+				}
+				
 			}
-			printf("\n");
-			if (iNodeBlock.inode->indirect!=0)
-			{
-				printf("	indirect block: %d", iNodeBlock.inode->indirect);
-				//TODO indirect pointers print out
-
-			}
-
-
 			
 		}
-		
 	}
 }
 
 int fs_mount()
 {
+	union fs_block block;
+	// idk how to check for a filesystem
+	disk_read(0,block.data);
+	if (block.super.magic==FS_MAGIC)//check superblock
+	{
+		bitmap = (bool *)malloc(disk_size()*sizeof(bool));
+		inodemap = (bool *)malloc(block.super.ninodes*sizeof(bool));
+
+		//make bitmap and make which one is free
+
+
+
+
+		MOUNTED = true;
+	}
+
+
 	return 0;
 }
 
@@ -121,23 +162,15 @@ int fs_write( int inumber, const char *data, int length, int offset )
 	return 0;
 }
 
-void inode_write( int inumber, struct fs_inode *inode ){
+void inode_save( int inumber, struct fs_inode *inode ){
 	
 }
 
-void inode_read(int inumber, struct fs_inode *inode ){
-	int offset = inumber/INODES_PER_BLOCK;	//which block past 1 is the inode at
-	union fs_block iNodeRead;
-	disk_read(1,iNodeRead.data);
-	inode->size = iNodeRead.inode[offset].size; //need to take size/4096 = #of blocks needed to read all the data
-	//if ceiling(size/4096)<5, then we only need to use the direct pointers
-	while (sizeremain > 0)
-	{
-		/* code */
-	}
-	
-	inode->isvalid = iNodeRead.inode[offset].isvalid;
-	//inode->direct = iNodeRead.inode[offset].direct;
-	//inode->indirect = iNodeRead.inode[offset].indirect;
+void inode_load(int inumber, struct fs_inode *inode )//needs to be called after reading
+{
+	union fs_block block;
+	int locat = inumber/INODES_PER_BLOCK; // gives which inode block to load
+	disk_read(locat+1, block.data);
+	assert(block.super.ninodes>inumber);
 
 }
